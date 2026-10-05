@@ -1,0 +1,14 @@
+enable-auto-scan: true
+enable-auto-generate: true
+enable-auto-pack: true
+enable-auto-reload: true
+debug: false
+
+geyser:
+  auto-detect: true
+
+itemsadder:
+  enabled: true
+
+nexo:
+  enabled: true

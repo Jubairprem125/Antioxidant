@@ -1,0 +1,16 @@
+name: Antioxidant
+version: '${version}'
+main: com.antioxidant.AntioxidantPlugin
+api-version: '1.20'
+author: Antioxidant
+description: Scans Java resource packs and generates Bedrock item pack assets and mapping manifests.
+softdepend: [Geyser-Spigot, Geyser, floodgate, ItemsAdder, Nexo]
+commands:
+  antioxidant:
+    description: Manage Antioxidant
+    usage: /antioxidant [reload|scan|generate|status|debug|mappings]
+    permission: antioxidant.admin
+permissions:
+  antioxidant.admin:
+    description: Allows administration of Antioxidant
+    default: op
