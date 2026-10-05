@@ -37,3 +37,5 @@ All commands require `antioxidant.admin`:
 * `generate` — rebuild all generated output
 * `debug` — detailed environment and conversion summary
 * `mappings` — show the generated mapping file location
+* ## 🚧 Currently in active development.
+* 
