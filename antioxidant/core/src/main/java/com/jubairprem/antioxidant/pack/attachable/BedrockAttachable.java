@@ -1,0 +1,257 @@
+/*
+ * Copyright (c) 2026 GeyserMC. https://geysermc.org
+ *
+ * This file is part of Antioxidant.
+ *
+ * Rainbow is free software: you can redistribute it and/or modify it under the terms of the
+ * GNU Lesser General Public License as published by the Free Software Foundation, either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * Rainbow is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+ * PURPOSE. See the GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License along with
+ * Antioxidant. If not, see <https://www.gnu.org/licenses/>.
+ */
+
+package com.jubairprem.antioxidant.pack.attachable;
+
+import com.mojang.datafixers.util.Either;
+import com.mojang.datafixers.util.Pair;
+import com.mojang.serialization.Codec;
+import com.mojang.serialization.DataResult;
+import com.mojang.serialization.DynamicOps;
+import com.mojang.serialization.codecs.RecordCodecBuilder;
+import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
+import net.minecraft.resources.Identifier;
+import net.minecraft.util.ExtraCodecs;
+import net.minecraft.util.StringRepresentable;
+import net.minecraft.world.entity.EquipmentSlot;
+import com.jubairprem.antioxidant.PackConstants;
+import com.jubairprem.antioxidant.mapping.texture.TextureHolder;
+import com.jubairprem.antioxidant.pack.BedrockVersion;
+import com.jubairprem.antioxidant.pack.animation.VanillaAnimations;
+import com.jubairprem.antioxidant.pack.geometry.VanillaGeometries;
+import com.jubairprem.antioxidant.pack.rendercontroller.VanillaRenderControllers;
+
+import java.util.ArrayList;
+import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.stream.Stream;
+
+public record BedrockAttachable(BedrockVersion formatVersion, AttachableInfo info) {
+    public static final Codec<BedrockAttachable> CODEC = RecordCodecBuilder.create(instance ->
+            instance.group(
+                    BedrockVersion.STRING_CODEC.fieldOf("format_version").forGetter(BedrockAttachable::formatVersion),
+                    AttachableInfo.CODEC.fieldOf("description").fieldOf("minecraft:attachable").forGetter(BedrockAttachable::info)
+            ).apply(instance, BedrockAttachable::new)
+    );
+
+    public static Builder builder(Identifier identifier) {
+        return new Builder(identifier);
+    }
+
+    public static BedrockAttachable.Builder equipment(Identifier identifier, EquipmentSlot slot, TextureHolder texture, boolean glider) {
+        String script = switch (slot) {
+            case HEAD -> "variable.helmet_layer_visible = 0.0;";
+            case CHEST -> "variable.chest_layer_visible = 0.0;";
+            case LEGS -> "variable.leg_layer_visible = 0.0;";
+            case FEET -> "variable.boot_layer_visible = 0.0;";
+            default -> "";
+        };
+        Builder builder = builder(identifier)
+                .withMaterial(DisplaySlot.DEFAULT, glider ? VanillaMaterials.ELYTRA : VanillaMaterials.ARMOR)
+                .withMaterial(DisplaySlot.ENCHANTED, glider ? VanillaMaterials.ELYTRA_GLINT : VanillaMaterials.ARMOR_ENCHANTED)
+                .withTexture(DisplaySlot.DEFAULT, texture)
+                .withTexture(DisplaySlot.ENCHANTED, VanillaTextures.ENCHANTED_ACTOR_GLINT)
+                .withGeometry(DisplaySlot.DEFAULT, Objects.requireNonNull(VanillaGeometries.fromEquipmentSlot(slot, glider)))
+                .withScript("parent_setup", script)
+                .withRenderController(VanillaRenderControllers.ARMOR);
+
+        if (glider) {
+            builder.withAnimation("default_controller", VanillaAnimations.ELYTRA_CONTROLLER);
+            builder.withAnimation("default", VanillaAnimations.ELYTRA_DEFAULT);
+            builder.withAnimation("gliding", VanillaAnimations.ELYTRA_GLIDING);
+            builder.withAnimation("sneaking", VanillaAnimations.ELYTRA_SNEAKING);
+            builder.withAnimation("sleeping", VanillaAnimations.ELYTRA_SLEEPING);
+            builder.withAnimation("swimming", VanillaAnimations.ELYTRA_SWIMMING);
+            builder.withScript("animate", List.of("default_controller"));
+        }
+        return builder;
+    }
+
+    public static BedrockAttachable.Builder geometry(Identifier identifier, String geometry) {
+        return builder(identifier)
+                .withMaterial(DisplaySlot.DEFAULT, VanillaMaterials.ENTITY_ALPHATEST)
+                .withMaterial(DisplaySlot.ENCHANTED, VanillaMaterials.ENTITY_ALPHATEST_GLINT)
+                .withTexture(DisplaySlot.ENCHANTED, VanillaTextures.ENCHANTED_ITEM_GLINT)
+                .withGeometry(DisplaySlot.DEFAULT, geometry);
+    }
+
+    public static class Builder {
+        private final Identifier identifier;
+        private final EnumMap<DisplaySlot, String> materials = new EnumMap<>(DisplaySlot.class);
+        private final Map<String, String> textures = new Object2ObjectOpenHashMap<>();
+        private final EnumMap<DisplaySlot, String> geometries = new EnumMap<>(DisplaySlot.class);
+        private final Map<String, String> animations = new HashMap<>();
+        private final Map<String, List<Script>> scripts = new HashMap<>();
+        private final List<String> renderControllers = new ArrayList<>();
+
+        public Builder(Identifier identifier) {
+            this.identifier = identifier;
+        }
+
+        public Builder withMaterial(DisplaySlot slot, String material) {
+            materials.put(slot, material);
+            return this;
+        }
+
+        public Builder withTexture(DisplaySlot slot, TextureHolder texture) {
+            return withTexture(slot, texture.bedrockSafeDestination());
+        }
+
+        public Builder withTexture(DisplaySlot slot, String texture) {
+            return withTexture(slot.name, texture);
+        }
+
+        public Builder withTexture(String slot, String texture) {
+            textures.put(slot, texture);
+            return this;
+        }
+
+        public Builder withGeometry(DisplaySlot slot, String geometry) {
+            geometries.put(slot, geometry);
+            return this;
+        }
+
+        public Builder withAnimation(String key, String animation) {
+            animations.put(key, animation);
+            return this;
+        }
+
+        public Builder withScript(String key, Script script) {
+            scripts.merge(key, List.of(script), (scripts, newScript) -> Stream.concat(scripts.stream(), newScript.stream()).toList());
+            return this;
+        }
+
+        public Builder withScript(String key, String script, String condition) {
+            return withScript(key, new Script(Either.left(script), Optional.of(condition)));
+        }
+
+        public Builder withScript(String key, String script) {
+            return withScript(key, new Script(Either.left(script), Optional.empty()));
+        }
+
+        public Builder withScript(String key, List<String> scripts) {
+            return withScript(key, new Script(Either.right(List.copyOf(scripts)), Optional.empty()));
+        }
+
+        public Builder withRenderController(String controller) {
+            renderControllers.add(controller);
+            return this;
+        }
+
+        public BedrockAttachable build() {
+            return new BedrockAttachable(PackConstants.ENGINE_VERSION,
+                    new AttachableInfo(identifier, verifyDefault(materials), Map.copyOf(textures), verifyDefault(geometries), Map.copyOf(animations),
+                            new Scripts(Map.copyOf(scripts)), List.copyOf(renderControllers)));
+        }
+
+        private static DisplayMap verifyDefault(EnumMap<DisplaySlot, String> map) {
+            if (!map.containsKey(DisplaySlot.DEFAULT)) {
+                throw new IllegalStateException("DisplayMap must have a default key");
+            }
+            return new DisplayMap(Map.copyOf(map));
+        }
+    }
+
+    public record AttachableInfo(Identifier identifier, DisplayMap materials, Map<String, String> textures,
+                                 DisplayMap geometry, Map<String, String> animations, Scripts scripts,
+                                 List<String> renderControllers) {
+        private static final Codec<Map<String, String>> STRING_MAP_CODEC = Codec.unboundedMap(Codec.STRING, Codec.STRING);
+        public static final Codec<AttachableInfo> CODEC = RecordCodecBuilder.create(instance ->
+                instance.group(
+                        Identifier.CODEC.fieldOf("identifier").forGetter(AttachableInfo::identifier),
+                        DisplayMap.CODEC.fieldOf("materials").forGetter(AttachableInfo::materials),
+                        Codec.unboundedMap(Codec.STRING, Codec.STRING).fieldOf("textures").forGetter(AttachableInfo::textures),
+                        DisplayMap.CODEC.fieldOf("geometry").forGetter(AttachableInfo::geometry),
+                        STRING_MAP_CODEC.optionalFieldOf("animations", Map.of()).forGetter(AttachableInfo::animations),
+                        Scripts.CODEC.optionalFieldOf("scripts", Scripts.EMPTY).forGetter(AttachableInfo::scripts),
+                        Codec.STRING.listOf().optionalFieldOf("render_controllers", List.of()).forGetter(AttachableInfo::renderControllers)
+                ).apply(instance, AttachableInfo::new)
+        );
+    }
+
+    public record DisplayMap(Map<DisplaySlot, String> map) {
+        public static final Codec<DisplayMap> CODEC = Codec.unboundedMap(DisplaySlot.CODEC, Codec.STRING)
+                .xmap(map -> map.isEmpty() ? new DisplayMap(new EnumMap<>(DisplaySlot.class)) : new DisplayMap(new EnumMap<>(map)), DisplayMap::map);
+    }
+
+    public enum DisplaySlot implements StringRepresentable {
+        DEFAULT("default"),
+        ENCHANTED("enchanted");
+
+        public static final Codec<DisplaySlot> CODEC = StringRepresentable.fromEnum(DisplaySlot::values);
+
+        private final String name;
+
+        DisplaySlot(String name) {
+            this.name = name;
+        }
+
+        @Override
+        public String getSerializedName() {
+            return name;
+        }
+    }
+
+    public record Scripts(Map<String, List<Script>> scripts) {
+        public static final Codec<Scripts> CODEC = Codec.unboundedMap(Codec.STRING, ExtraCodecs.compactListCodec(Script.CODEC)).xmap(Scripts::new, Scripts::scripts);
+        public static final Scripts EMPTY = new Scripts(Map.of());
+    }
+
+    // TODO clean this up
+    public record Script(Either<String, List<String>> script, Optional<String> condition) {
+        private static final Codec<Script> SCRIPT_WITH_CONDITION_CODEC = Codec.unboundedMap(Codec.STRING, Codec.STRING).flatXmap(
+                scriptMap -> {
+                    if (scriptMap.size() != 1) {
+                        return DataResult.error(() -> "Script with condition must have exactly one key-value pair");
+                    }
+                    String script = scriptMap.keySet().iterator().next();
+                    return DataResult.success(new Script(Either.left(script), Optional.of(scriptMap.get(script))));
+                },
+                script -> script.condition.map(condition -> DataResult.success(Map.of(script.script.left().orElseThrow(), condition)))
+                        .orElse(DataResult.error(() -> "Script must have a condition"))
+        );
+        private static final Codec<Script> SCRIPT_LIST_CODEC = Codec.STRING.listOf().flatComapMap(scripts -> new Script(Either.right(scripts), Optional.empty()), script ->
+                script.script.map(ignored -> DataResult.error(() -> "Script must have a list of scripts"), DataResult::success));
+        public static final Codec<Script> CODEC = SCRIPT_WITH_CONDITION_CODEC.mapResult(new Codec.ResultFunction<>() {
+            @Override
+            public <T> DataResult<Pair<Script, T>> apply(DynamicOps<T> ops, T input, DataResult<Pair<Script, T>> decoded) {
+                if (decoded.isError()) {
+                    decoded = SCRIPT_LIST_CODEC.decode(ops, input);
+                    if (decoded.isError()) {
+                        return Codec.STRING.map(script -> new Script(Either.left(script), Optional.empty())).decode(ops, input);
+                    }
+                }
+                return decoded;
+            }
+
+            @Override
+            public <T> DataResult<T> coApply(DynamicOps<T> ops, Script input, DataResult<T> encoded) {
+                if (encoded.isError()) {
+                    encoded = SCRIPT_LIST_CODEC.encodeStart(ops, input);
+                    if (encoded.isError()) {
+                        return input.script.map(script -> Codec.STRING.encodeStart(ops, script), _ -> DataResult.error(() -> "Script must be a single script"));
+                    }
+                }
+                return encoded;
+            }
+        });
+    }
+}

@@ -1,0 +1,20 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.jubairprem.antioxidant.datagen.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "BlockStateGeneratorCollectorAccessor",
+    "ItemInfoCollectorAccessor",
+    "ModelProviderMixin",
+    "SimpleModelCollectorAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "mixins": [
+    "FabricLanguageProviderAccessor",
+    "FabricLanguageProviderMixin",
+    "FabricSoundsProviderMixin"
+  ]
+}

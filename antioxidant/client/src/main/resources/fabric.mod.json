@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "id": "antioxidant",
+  "version": "${version}",
+  "name": "Antioxidant",
+  "description": "Antioxidant is a community-developed fork of GeyserMC/Rainbow, maintained by Jubair_Prem, focused on improving Bedrock Edition compatibility through custom resource pack generation and Geyser mappings.",
+  "authors": [
+    "Jubair_Prem"
+  ],
+  "contact": {
+    "homepage": "https://github.com/GeyserMC/Rainbow",
+    "issues": "https://github.com/GeyserMC/Rainbow/issues",
+    "sources": "https://github.com/GeyserMC/Rainbow"
+  },
+  "license": "LGPL-3.0-or-later",
+  "icon": "assets/antioxidant/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.jubairprem.antioxidant.client.AntioxidantClient"
+    ]
+  },
+  "mixins": [
+    "antioxidant-client.mixins.json"
+  ],
+  "accessWidener": "antioxidant-client.accesswidener",
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "~${minecraft_version}"
+  },
+  "custom": {
+    "modmenu": {
+      "links": {
+        "modmenu.discord": "https://discord.gg/GeyserMC"
+      }
+    }
+  }
+}

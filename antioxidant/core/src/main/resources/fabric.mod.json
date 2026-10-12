@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "antioxidant-core",
+  "version": "${version}",
+  "name": "Antioxidant-core",
+  "description": "The core library module of Antioxidant",
+  "authors": [
+    "Jubair_Prem",
+    "GeyserMC contributors"
+  ],
+  "contact": {
+    "homepage": "https://github.com/GeyserMC/Rainbow",
+    "issues": "https://github.com/GeyserMC/Rainbow/issues",
+    "sources": "https://github.com/GeyserMC/Rainbow"
+  },
+  "license": "LGPL-3.0-or-later",
+  "environment": "client",
+  "mixins": [
+    "antioxidant.mixins.json"
+  ],
+  "accessWidener": "antioxidant.accesswidener",
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "~${minecraft_version}"
+  },
+  "custom": {
+    "modmenu": {
+      "badges": ["library"],
+      "links": {
+        "modmenu.discord": "https://discord.gg/GeyserMC"
+      },
+      "parent": "antioxidant"
+    }
+  }
+}

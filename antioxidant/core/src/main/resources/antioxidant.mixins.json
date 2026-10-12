@@ -1,0 +1,20 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.jubairprem.antioxidant.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "BlockStateModelSimpleCachedUnbakedRootAccessor",
+    "FaceBakeryAccessor",
+    "LateBoundIdMapperAccessor",
+    "NativeImageAccessor",
+    "RangeSelectItemModelAccessor",
+    "ResolvableProfileAccessor",
+    "SpriteContentsAccessor",
+    "SpriteLoaderAccessor",
+    "TextureSlotsAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.jubairprem.antioxidant.client.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "EntityRenderDispatcherAccessor",
+    "GuiItemRenderStateMixin",
+    "ModelManagerMixin",
+    "PictureInPictureRendererAccessor",
+    "PictureInPictureRendererMixin",
+    "SoundManagerMixin",
+    "SplashRendererAccessor",
+    "SpriteContentsAnimatedTextureAccessor",
+    "SpriteContentsClientAccessor",
+    "WaypointStyleManagerAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

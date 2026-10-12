@@ -1,0 +1,138 @@
+/*
+ * Copyright (c) 2026 GeyserMC. https://geysermc.org
+ *
+ * This file is part of Antioxidant.
+ *
+ * Rainbow is free software: you can redistribute it and/or modify it under the terms of the
+ * GNU Lesser General Public License as published by the Free Software Foundation, either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * Rainbow is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+ * PURPOSE. See the GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License along with
+ * Antioxidant. If not, see <https://www.gnu.org/licenses/>.
+ */
+
+package com.jubairprem.antioxidant.pack.sound;
+
+import com.mojang.datafixers.util.Pair;
+import com.mojang.serialization.Codec;
+import com.mojang.serialization.MapCodec;
+import com.mojang.serialization.codecs.RecordCodecBuilder;
+import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
+import net.minecraft.client.resources.sounds.Sound;
+import net.minecraft.client.resources.sounds.SoundEventRegistration;
+import net.minecraft.resources.Identifier;
+import net.minecraft.util.RandomSource;
+import net.minecraft.util.valueproviders.ConstantFloat;
+import net.minecraft.util.valueproviders.SampledFloat;
+import com.jubairprem.antioxidant.CodecUtil;
+import com.jubairprem.antioxidant.Antioxidant;
+import com.jubairprem.antioxidant.mapping.PackSerializer;
+import com.jubairprem.antioxidant.mapping.PackSerializingContext;
+import com.jubairprem.antioxidant.pack.BedrockVersion;
+import com.jubairprem.antioxidant.pack.PackPaths;
+import com.jubairprem.antioxidant.stats.PackStats;
+
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.stream.Stream;
+
+public record BedrockSoundDefinitions(Map<Identifier, SoundEventRegistration> definitions) implements PackSerializer.Serializable, PackStats.Holder {
+    public static final BedrockVersion FORMAT_VERSION = BedrockVersion.of(1, 20, 20);
+    public static final Codec<Sound> BEDROCK_SOUND_CODEC = RecordCodecBuilder.create(instance ->
+            instance.group(
+                    Codec.STRING.fieldOf("name").forGetter(sound -> "sounds/" + sound.getLocation().getPath()),
+                    Codec.BOOL.optionalFieldOf("stream", false).forGetter(Sound::shouldStream),
+                    Codec.BOOL.optionalFieldOf("is3D", false).forGetter(ignored -> true),
+                    createOptionalStaticSampledFloatCodec("volume", 1.0F).forGetter(Sound::getVolume),
+                    createOptionalStaticSampledFloatCodec("pitch", 1.0F).forGetter(Sound::getPitch),
+                    Codec.INT.optionalFieldOf("weight", 1).forGetter(Sound::getWeight)
+            ).apply(instance, (name, stream, _, volume, pitch, weight) ->
+                    new Sound(Identifier.withDefaultNamespace(name.replaceFirst("^sounds/", "")), volume, pitch, weight,
+                            Sound.Type.FILE, stream, false, 16))
+    );
+    public static final Codec<SoundEventRegistration> BEDROCK_REGISTRATION_CODEC = RecordCodecBuilder.create(instance ->
+            instance.group(
+                    Codec.STRING.optionalFieldOf("category", "sound").forGetter(_ -> "sound"),
+                    Codec.FLOAT.optionalFieldOf("min_distance", 0.0F).forGetter(registration -> Float.valueOf(registration.getSounds().stream().map(Sound::getAttenuationDistance).findFirst().orElse(0))),
+                    Codec.FLOAT.optionalFieldOf("max_distance", 0.0F).forGetter(registration -> Float.valueOf(registration.getSounds().stream().map(Sound::getAttenuationDistance).findFirst().orElse(0)) * 2.0F),
+                    BEDROCK_SOUND_CODEC.listOf().fieldOf("sounds").forGetter(SoundEventRegistration::getSounds),
+                    Codec.STRING.optionalFieldOf("subtitle", null).forGetter(SoundEventRegistration::getSubtitle)
+            ).apply(instance, (_, _, _, sounds, subtitle) -> new SoundEventRegistration(sounds, false, subtitle))
+    );
+    public static final Codec<BedrockSoundDefinitions> CODEC = RecordCodecBuilder.create(instance ->
+            instance.group(
+                    CodecUtil.unitVerifyCodec(BedrockVersion.STRING_CODEC, "format_version", FORMAT_VERSION),
+                    Codec.compoundList(Identifier.CODEC, BEDROCK_REGISTRATION_CODEC)
+                            .xmap(pairs -> pairs.stream().collect(Pair.toMap()),
+                                    registrations -> registrations.entrySet().stream().map(entry -> Pair.of(entry.getKey(), entry.getValue())).toList())
+                            .fieldOf("sound_definitions").forGetter(BedrockSoundDefinitions::definitions)
+            ).apply(instance, (_, definitions) -> new BedrockSoundDefinitions(definitions))
+    );
+
+    public int size() {
+        return definitions.size();
+    }
+
+    @Override
+    public int stat() {
+        return size();
+    }
+
+    public Stream<Sound> flatten() {
+        return definitions.values().stream()
+                .flatMap(registration -> registration.getSounds().stream());
+    }
+
+    @Override
+    public CompletableFuture<?> save(PackSerializingContext context) {
+        return PackSerializer.Serializable.wrapCodec(CODEC, this, PackPaths::soundDefinitions)
+                .with(flatten()
+                        .map(BedrockSoundDefinitions::serializableSound)
+                        .toList())
+                .save(context);
+    }
+
+    private static PackSerializer.Serializable serializableSound(Sound sound) {
+        return context -> context.assetResolver().getSound(sound.getLocation())
+                .map(resource -> context.serializer().saveResource(resource, context.paths().sound(sound)))
+                .orElseGet(PackSerializer::noop);
+    }
+
+    private static MapCodec<SampledFloat> createOptionalStaticSampledFloatCodec(String field, float defaultValue) {
+        return Codec.FLOAT.optionalFieldOf(field, defaultValue).xmap(ConstantFloat::of, f -> f.sample(RandomSource.create(0L)));
+    }
+
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    public static class Builder {
+        private final Map<Identifier, SoundEventRegistration> definitions = new Object2ObjectOpenHashMap<>();
+
+        public Builder withRegistrations(String namespace, Map<String, SoundEventRegistration> registrations) {
+            for (Map.Entry<String, SoundEventRegistration> registration : registrations.entrySet()) {
+                definitions.put(Identifier.fromNamespaceAndPath(namespace, registration.getKey()), registration.getValue());
+            }
+            return this;
+        }
+
+        public Builder withRegistrations(Map<String, Map<String, SoundEventRegistration>> registrations) {
+            for (String namespace : registrations.keySet()) {
+                if (Antioxidant.isVanilla(namespace)) {
+                    continue;
+                }
+
+                withRegistrations(namespace, registrations.get(namespace));
+            }
+            return this;
+        }
+
+        public BedrockSoundDefinitions build() {
+            return new BedrockSoundDefinitions(Map.copyOf(definitions));
+        }
+    }
+}

@@ -1,0 +1,269 @@
+/*
+ * Copyright (c) 2026 GeyserMC. https://geysermc.org
+ *
+ * This file is part of Antioxidant.
+ *
+ * Rainbow is free software: you can redistribute it and/or modify it under the terms of the
+ * GNU Lesser General Public License as published by the Free Software Foundation, either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * Rainbow is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+ * PURPOSE. See the GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License along with
+ * Antioxidant. If not, see <https://www.gnu.org/licenses/>.
+ */
+
+package com.jubairprem.antioxidant.client.command;
+
+import com.mojang.brigadier.Command;
+import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.StringArgumentType;
+import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
+import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
+import net.minecraft.ChatFormatting;
+import net.minecraft.commands.arguments.ResourceKeyArgument;
+import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
+import net.minecraft.commands.arguments.coordinates.Coordinates;
+import net.minecraft.commands.arguments.coordinates.LocalCoordinates;
+import net.minecraft.commands.arguments.coordinates.WorldCoordinate;
+import net.minecraft.commands.arguments.coordinates.WorldCoordinates;
+import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.ClickEvent;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.ItemStackTemplate;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.waypoints.WaypointStyleAsset;
+import net.minecraft.world.waypoints.WaypointStyleAssets;
+import com.jubairprem.antioxidant.Antioxidant;
+import com.jubairprem.antioxidant.client.PackManager;
+import com.jubairprem.antioxidant.client.mapper.InventoryMapper;
+import com.jubairprem.antioxidant.client.mapper.PackMapper;
+import com.jubairprem.antioxidant.client.mapper.RecipeMapper;
+import com.jubairprem.antioxidant.client.mixin.WaypointStyleManagerAccessor;
+import com.jubairprem.antioxidant.pack.BedrockPack;
+
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.function.BiConsumer;
+
+public class PackGeneratorCommand {
+
+    private static final Component NO_PACK_CREATED = Component.translatable("commands.antioxidant.no_pack", Component.literal("/antioxidant create <name>")
+            .withStyle(style -> style.withColor(ChatFormatting.BLUE).withUnderlined(true)
+                    .withClickEvent(new ClickEvent.SuggestCommand("/antioxidant create "))));
+
+    public static void register(CommandDispatcher<FabricClientCommandSource> dispatcher, PackManager packManager, PackMapper packMapper) {
+        dispatcher.register(ClientCommands.literal("antioxidant")
+                .then(ClientCommands.literal("create")
+                        .then(ClientCommands.argument("name", StringArgumentType.word())
+                                .executes(context -> {
+                                    String name = StringArgumentType.getString(context, "name");
+                                    try {
+                                        packManager.startPack(name);
+                                    } catch (Exception exception) {
+                                        context.getSource().sendError(Component.translatable("commands.antioxidant.create_pack_failed"));
+                                        throw new RuntimeException(exception);
+                                    }
+                                    context.getSource().sendFeedback(Component.translatable("commands.antioxidant.pack_created", name));
+                                    return 0;
+                                })
+                        )
+                )
+                .then(ClientCommands.literal("map")
+                        .then(ClientCommands.literal("block")
+                                .then(ClientCommands.argument("target", BlockPosArgument.blockPos())
+                                        .executes(context -> {
+                                            BlockPos pos = clientCoordinatesToBlockPos(context.getSource(), context.getArgument("target", Coordinates.class));
+                                            BlockState state = context.getSource().getLevel().getBlockState(pos);
+                                            return runWithPack(packManager, (source, pack) -> {
+                                                switch (pack.mapBlockStateExplicitly(state)) {
+                                                    case NONE_MAPPED -> source.sendError(Component.translatable("commands.antioxidant.no_block_mapped"));
+                                                    case PROBLEMS_OCCURRED -> source.sendFeedback(Component.translatable("commands.antioxidant.mapped_target_block_problems"));
+                                                    case MAPPED_SUCCESSFULLY -> source.sendFeedback(Component.translatable("commands.antioxidant.mapped_target_block"));
+                                                }
+                                            }).run(context);
+                                        })
+                                )
+                        )
+                        .then(ClientCommands.literal("item")
+                                .executes(runWithPack(packManager, (source, pack) -> {
+                                    ItemStack heldItem = source.getPlayer().getMainHandItem();
+                                    if (heldItem.isEmpty()) {
+                                        source.sendError(Component.literal("Must hold an item to map"));
+                                    } else {
+                                        switch (packMapper.mapItems(pack, List.of(ItemStackTemplate.fromNonEmptyStack(heldItem))).toSingleResult()) {
+                                            case NONE_MAPPED -> source.sendError(Component.translatable("commands.antioxidant.no_item_mapped"));
+                                            case PROBLEMS_OCCURRED -> source.sendFeedback(Component.translatable("commands.antioxidant.mapped_held_item_problems"));
+                                            case MAPPED_SUCCESSFULLY -> source.sendFeedback(Component.translatable("commands.antioxidant.mapped_held_item"));
+                                        }
+                                    }
+                                }))
+                        )
+                        .then(ClientCommands.literal("sounds")
+                                .then(ClientCommands.argument("namespace", StringArgumentType.word())
+                                        .suggests(SoundNamespaceSuggestionProvider.INSTANCE)
+                                        .executes(context -> {
+                                            String namespace = StringArgumentType.getString(context, "namespace");
+                                            return runWithPack(packManager, (source, pack) -> {
+                                                if (pack.mapSounds(namespace)) {
+                                                    source.sendFeedback(Component.translatable("commands.antioxidant.mapped_sounds_of_namespace", namespace));
+                                                } else {
+                                                    source.sendError(Component.translatable("commands.antioxidant.no_sounds_mapped"));
+                                                }
+                                            }).run(context);
+                                        })
+                                )
+                        )
+                        .then(ClientCommands.literal("waypoint")
+                                .then(ClientCommands.argument("style", ResourceKeyArgument.key(WaypointStyleAssets.ROOT_ID))
+                                        .suggests(WaypointStyleSuggestionProvider.INSTANCE)
+                                        .executes(context -> {
+                                            //noinspection unchecked
+                                            ResourceKey<WaypointStyleAsset> key = (ResourceKey<WaypointStyleAsset>) context.getArgument("style", ResourceKey.class);
+                                            return runWithPack(packManager, (source, pack) -> {
+                                                switch (pack.mapWaypointStyle(key)) {
+                                                    case PROBLEMS_OCCURRED -> source.sendError(Component.translatable("commands.antioxidant.mapped_waypoint_style_problems", key.identifier()));
+                                                    case MAPPED_SUCCESSFULLY -> source.sendFeedback(Component.translatable("commands.antioxidant.mapped_waypoint_style", key.identifier()));
+                                                }
+                                            }).run(context);
+                                        })
+                                )
+                        )
+                )
+                .then(ClientCommands.literal("mapinventory")
+                        .executes(runWithPack(packManager, (source, pack) -> {
+                            List<ItemStackTemplate> inventoryStacks = new ArrayList<>();
+                            source.getPlayer().getInventory().forEach(stack -> {
+                                if (!stack.isEmpty()) {
+                                    inventoryStacks.add(ItemStackTemplate.fromNonEmptyStack(stack));
+                                }
+                            });
+                            PackMapper.MappingResults results = packMapper.mapItems(pack, inventoryStacks);
+
+                            if (results.itemsMapped() > 0 || results.skullsMapped() > 0) {
+                                if (results.itemsMapped() > 0) {
+                                    source.sendFeedback(Component.translatable("commands.antioxidant.mapped_items_from_inventory", results.itemsMapped()));
+                                    if (results.problems() > 0) {
+                                        source.sendError(Component.translatable("chat.antioxidant.mapped_problems"));
+                                    }
+                                }
+                                if (results.skullsMapped() > 0) {
+                                    source.sendFeedback(Component.translatable("commands.antioxidant.mapped_skulls_from_inventory", results.skullsMapped()));
+                                }
+                            } else {
+                                source.sendError(Component.translatable("commands.antioxidant.no_items_mapped"));
+                            }
+                        }))
+                )
+                .then(ClientCommands.literal("auto")
+                        /* This is disabled for now.
+                        .then(ClientCommands.literal("command")
+                                .then(ClientCommands.argument("suggestions", CommandSuggestionsArgumentType.TYPE)
+                                        .executes(context -> {
+                                            Pair<String, CompletableFuture<Suggestions>> suggestions = CommandSuggestionsArgumentType.getSuggestions(context, "suggestions");
+                                            String baseCommand = suggestions.getFirst();
+                                            suggestions.getSecond().thenAccept(completed -> {
+                                                ItemSuggestionProvider provider = new ItemSuggestionProvider(completed.getList().stream()
+                                                        .map(suggestion -> baseCommand.substring(0, suggestion.getRange().getStart()) + suggestion.getText())
+                                                        .toList());
+                                                packMapper.setItemProvider(provider);
+                                                context.getSource().sendFeedback(Component.literal("Running " + provider.queueSize() + " commands to obtain custom items to map"));
+                                            });
+                                            return 0;
+                                        })
+                                )
+                        )
+                         */
+                        .then(ClientCommands.literal("blocks")
+                                .executes(runWithPack(packManager, (source, pack) -> {
+                                    BedrockPack.MappingResults results = pack.tryMapAllVanillaBlocks();
+                                    switch (results.toSingleResult()) {
+                                        case NONE_MAPPED -> source.sendFeedback(Component.translatable("commands.antioxidant.no_blocks_mapped"));
+                                        case MAPPED_SUCCESSFULLY, PROBLEMS_OCCURRED -> {
+                                            source.sendFeedback(Component.translatable("commands.antioxidant.mapped_blocks", results.amountMapped()));
+                                            if (results.problems() > 0) {
+                                                source.sendError(Component.translatable("chat.antioxidant.mapped_problems"));
+                                            }
+                                        }
+                                    }
+                                }))
+                        )
+                        .then(ClientCommands.literal("inventory")
+                                .executes(runWithPack(packManager, (source, pack) -> {
+                                    packMapper.setItemProvider(InventoryMapper.INSTANCE);
+                                    source.sendFeedback(Component.translatable("commands.antioxidant.automatic_inventory_mapping"));
+                                }))
+                        )
+                        .then(ClientCommands.literal("recipes")
+                                .executes(runWithPack(packManager, (source, pack) -> {
+                                    source.sendFeedback(Component.translatable("commands.antioxidant.automatic_recipe_mapping"));
+                                    packMapper.setItemProvider(RecipeMapper.INSTANCE);
+                                }))
+                        )
+                        .then(ClientCommands.literal("sounds")
+                                .executes(runWithPack(packManager, (source, pack) -> {
+                                    if (pack.mapAllSounds()) {
+                                        source.sendFeedback(Component.translatable("commands.antioxidant.mapped_all_sounds"));
+                                    } else {
+                                        source.sendError(Component.translatable("commands.antioxidant.no_sounds_mapped"));
+                                    }
+                                }))
+                        )
+                        .then(ClientCommands.literal("waypoints")
+                                .executes(runWithPack(packManager, (source, pack) -> {
+                                    long mapped = ((WaypointStyleManagerAccessor) source.getClient().gui.hud.getWaypointStyles()).getWaypointStyles().keySet().stream()
+                                            .filter(key -> !Antioxidant.isVanilla(key))
+                                            .map(pack::mapWaypointStyle)
+                                            .filter(result -> result == BedrockPack.MappingResult.MAPPED_SUCCESSFULLY)
+                                            .count();
+                                    source.sendFeedback(Component.translatable("commands.antioxidant.mapped_waypoint_styles", mapped));
+                                }))
+                        )
+                        .then(ClientCommands.literal("stop")
+                                .executes(runWithPack(packManager, (source, pack) -> {
+                                    packMapper.setItemProvider(null);
+                                    source.sendFeedback(Component.translatable("commands.antioxidant.stopped_automatic_mapping"));
+                                }))
+                        )
+                )
+                .then(ClientCommands.literal("finish")
+                        .executes(context -> {
+                            context.getSource().sendFeedback(Component.translatable("commands.antioxidant.pack_finishing"));
+                            Optional<Path> exportPath = packManager.getExportPath();
+                            Runnable onFinish = () -> context.getSource().sendFeedback(Component.translatable("commands.antioxidant.pack_finished_successfully").withStyle(style
+                                    -> style.withUnderlined(true).withClickEvent(new ClickEvent.OpenFile(exportPath.orElseThrow()))));
+                            if (!packManager.finish(onFinish)) {
+                                context.getSource().sendError(NO_PACK_CREATED);
+                            }
+                            return 0;
+                        })
+                )
+        );
+    }
+
+    private static Command<FabricClientCommandSource> runWithPack(PackManager manager, BiConsumer<FabricClientCommandSource, BedrockPack> executor) {
+        return context -> {
+            manager.runOrElse(pack -> executor.accept(context.getSource(), pack),
+                    () -> context.getSource().sendError(NO_PACK_CREATED));
+            return 0;
+        };
+    }
+
+    private static BlockPos clientCoordinatesToBlockPos(FabricClientCommandSource source, Coordinates coordinates) {
+        if (coordinates instanceof WorldCoordinates(WorldCoordinate x, WorldCoordinate y, WorldCoordinate z)) {
+            Vec3 pos = source.getPosition();
+            return BlockPos.containing(new Vec3(x.get(pos.x), y.get(pos.y), z.get(pos.z)));
+        } else if (coordinates instanceof LocalCoordinates(double left, double up, double forwards)) {
+            Vec3 origin = source.getPosition();
+            return BlockPos.containing(Vec3.applyLocalCoordinatesToRotation(source.getRotation(), new Vec3(left, up, forwards)).add(origin.x, origin.y, origin.z));
+        }
+        throw new IllegalStateException("Don't know how to turn " + coordinates + " into a BlockPos");
+    }
+}

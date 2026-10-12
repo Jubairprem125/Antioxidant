@@ -1,0 +1,407 @@
+/*
+ * Copyright (c) 2026 GeyserMC. https://geysermc.org
+ *
+ * This file is part of Antioxidant.
+ *
+ * Rainbow is free software: you can redistribute it and/or modify it under the terms of the
+ * GNU Lesser General Public License as published by the Free Software Foundation, either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * Rainbow is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+ * PURPOSE. See the GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License along with
+ * Antioxidant. If not, see <https://www.gnu.org/licenses/>.
+ */
+
+package com.jubairprem.antioxidant.datagen;
+
+import com.google.common.hash.Hashing;
+import com.mojang.blaze3d.platform.NativeImage;
+import com.mojang.serialization.Codec;
+import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
+import net.fabricmc.fabric.api.client.datagen.v1.builder.SoundTypeBuilder;
+import net.fabricmc.fabric.api.client.datagen.v1.provider.FabricModelProvider;
+import net.fabricmc.fabric.api.client.datagen.v1.provider.FabricSoundsProvider;
+import net.fabricmc.fabric.api.datagen.v1.FabricPackOutput;
+import net.fabricmc.fabric.api.datagen.v1.provider.FabricLanguageProvider;
+import net.fabricmc.fabric.impl.datagen.client.SoundTypeBuilderImpl;
+import net.minecraft.client.data.models.blockstates.BlockModelDefinitionGenerator;
+import net.minecraft.client.data.models.model.ModelInstance;
+import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
+import net.minecraft.client.renderer.block.dispatch.BlockStateModelDispatcher;
+import net.minecraft.client.renderer.item.ClientItem;
+import net.minecraft.client.resources.WaypointStyle;
+import net.minecraft.client.resources.metadata.animation.AnimationMetadataSection;
+import net.minecraft.client.resources.model.EquipmentClientInfo;
+import net.minecraft.client.resources.model.ResolvedModel;
+import net.minecraft.client.resources.model.UnbakedModel;
+import net.minecraft.client.resources.model.cuboid.CuboidModel;
+import net.minecraft.client.resources.model.cuboid.ItemModelGenerator;
+import net.minecraft.client.resources.sounds.Sound;
+import net.minecraft.client.resources.sounds.SoundEventRegistration;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.core.component.DataComponentInitializers;
+import net.minecraft.core.component.DataComponentMap;
+import net.minecraft.core.component.DataComponentPatch;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.data.CachedOutput;
+import net.minecraft.data.DataProvider;
+import net.minecraft.data.PackOutput;
+import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.packs.resources.Resource;
+import net.minecraft.server.packs.resources.ResourceManager;
+import net.minecraft.util.ProblemReporter;
+import net.minecraft.util.Util;
+import net.minecraft.util.valueproviders.ConstantFloat;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.equipment.EquipmentAsset;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.waypoints.WaypointStyleAsset;
+import com.jubairprem.antioxidant.Antioxidant;
+import com.jubairprem.antioxidant.AntioxidantIO;
+import com.jubairprem.antioxidant.datagen.accessor.SoundsProviderDataAccessor;
+import com.jubairprem.antioxidant.datagen.mixin.FabricLanguageProviderAccessor;
+import com.jubairprem.antioxidant.datagen.accessor.LanguageProviderDataAccessor;
+import com.jubairprem.antioxidant.datagen.accessor.ModelProviderDataAccessor;
+import com.jubairprem.antioxidant.mapping.AssetResolver;
+import com.jubairprem.antioxidant.mapping.PackSerializer;
+import com.jubairprem.antioxidant.mapping.texture.TextureResource;
+import com.jubairprem.antioxidant.pack.BedrockPack;
+import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.StringReader;
+import java.nio.file.Path;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
+
+public abstract class AntioxidantDataProvider implements DataProvider {
+    private static final Logger PROBLEM_LOGGER = LoggerFactory.getLogger(Antioxidant.MOD_ID);
+
+    private final CompletableFuture<HolderLookup.Provider> registries;
+    private final String packName;
+    private final Providers providers;
+    private final Paths paths;
+
+    private @Nullable Map<ResourceKey<?>, DataComponentMap.Builder> initializedItemComponents;
+
+    protected AntioxidantDataProvider(FabricPackOutput output, CompletableFuture<HolderLookup.Provider> registries, String packName,
+                                  Identifier outputRoot, Providers providers, Paths paths) {
+        this.registries = registries;
+        this.packName = packName;
+        this.providers = providers;
+
+        Path computedOutputRoot = output.createPathProvider(PackOutput.Target.RESOURCE_PACK, outputRoot.getPath())
+                .file(outputRoot, "").getParent(); // getParent() returns root -> assets/<output namespace>/<output path>
+        this.paths = paths.resolveFrom(computedOutputRoot);
+    }
+
+    protected AntioxidantDataProvider(FabricPackOutput output, CompletableFuture<HolderLookup.Provider> registries, String packName,
+                                  Identifier outputRoot, Providers providers) {
+        this(output, registries, packName, outputRoot, providers, Paths.DEFAULT);
+    }
+
+    protected AntioxidantDataProvider(FabricPackOutput output, CompletableFuture<HolderLookup.Provider> registries, String packName,
+                                  Providers providers) {
+        this(output, registries, packName, Identifier.withDefaultNamespace("bedrock"), providers);
+    }
+
+    protected AntioxidantDataProvider(FabricPackOutput output, CompletableFuture<HolderLookup.Provider> registries, String packName,
+                                  FabricModelProvider modelProvider) {
+        this(output, registries, packName, new Providers(modelProvider, Optional.empty(), Optional.empty(), Map.of(), Map.of()));
+    }
+
+    protected AntioxidantDataProvider(FabricPackOutput output, CompletableFuture<HolderLookup.Provider> registries, FabricModelProvider modelProvider) {
+        this(output, registries, Antioxidant.MOD_ID + "-generated", modelProvider);
+    }
+
+    @Override
+    public CompletableFuture<?> run(CachedOutput output) {
+        CompletableFuture<?> models = providers.models.run(output);
+        CompletableFuture<?> languages = providers.languages
+                .map(providers -> providers.stream()
+                        .map(provider -> provider.run(output))
+                        .collect(() -> CompletableFuture.completedFuture(null), CompletableFuture::allOf, CompletableFuture::allOf))
+                .orElseGet(() -> CompletableFuture.completedFuture(null));
+        CompletableFuture<?> sounds = providers.sounds.map(provider -> provider.run(output))
+                .orElseGet(() -> CompletableFuture.completedFuture(null));
+
+        CompletableFuture<BedrockPack> bedrockPack = ClientPackLoader.openClientResources()
+                .thenCompose(resourceManager -> registries.thenApply(registries -> {
+                    // You're not really supposed to do this, but Rainbow *needs* the initialised components to function properly
+                    BuiltInRegistries.DATA_COMPONENT_INITIALIZERS.build(registries).forEach(DataComponentInitializers.PendingComponents::apply);
+
+                    try (resourceManager) {
+                        BedrockPack pack = createBedrockPack(new Serializer(output, registries), new DatagenResolver(resourceManager, providers)).build();
+
+                        Set<Item> sortedItemInfos = new TreeSet<>(Comparator.comparing(item -> item.builtInRegistryHolder().key().identifier()));
+                        sortedItemInfos.addAll(providers.getItemInfos().keySet());
+                        for (Item item : sortedItemInfos) {
+                            pack.mapItem(getVanillaItem(item).builtInRegistryHolder(), getVanillaDataComponentPatch(item));
+                        }
+                        return pack;
+                    }
+                }));
+
+        return CompletableFuture.allOf(models, languages, sounds, bedrockPack.thenCompose(BedrockPack::save));
+    }
+
+    protected BedrockPack.Builder createBedrockPack(PackSerializer serializer, AssetResolver resolver) {
+        return BedrockPack.builder(packName, paths.geyserMappingsPath, paths.packPath, serializer, resolver)
+                .withLanguageFolder(paths.langPath)
+                .withReporter(path -> new ProblemReporter.ScopedCollector(path, PROBLEM_LOGGER));
+    }
+
+    protected abstract Item getVanillaItem(Item modded);
+
+    protected DataComponentPatch getVanillaDataComponentPatch(Item modded) {
+        DataComponentPatch.Builder builder = DataComponentPatch.builder();
+        modded.components().forEach(builder::set);
+        return builder.build();
+    }
+
+    public static class Providers {
+        private final FabricModelProvider models;
+        private final Optional<List<FabricLanguageProvider>> languages;
+        private final Optional<FabricSoundsProvider> sounds;
+        private final Map<ResourceKey<EquipmentAsset>, EquipmentClientInfo> equipmentInfos;
+        private final Map<ResourceKey<WaypointStyleAsset>, WaypointStyle> waypointStyles;
+
+        public Providers(FabricModelProvider models, Optional<List<FabricLanguageProvider>> languages,
+                         Optional<FabricSoundsProvider> sounds,
+                         Map<ResourceKey<EquipmentAsset>, EquipmentClientInfo> equipmentInfos,
+                         Map<ResourceKey<WaypointStyleAsset>, WaypointStyle> waypointStyles) {
+            this.models = models;
+            this.languages = languages;
+            this.sounds = sounds;
+            this.equipmentInfos = equipmentInfos;
+            this.waypointStyles = waypointStyles;
+        }
+
+        public static Providers create(FabricModelProvider models, Optional<FabricLanguageProvider> languages,
+                                       Optional<FabricSoundsProvider> sounds,
+                                       Map<ResourceKey<EquipmentAsset>, EquipmentClientInfo> equipmentInfos,
+                                       Map<ResourceKey<WaypointStyleAsset>, WaypointStyle> waypointStyles) {
+            return new Providers(models, languages.map(List::of), sounds, equipmentInfos, waypointStyles);
+        }
+
+        private Map<Item, ClientItem> getItemInfos() {
+            return ((ModelProviderDataAccessor) models).antioxidant$getItemInfos();
+        }
+
+        private Map<Block, BlockModelDefinitionGenerator> getBlockDefinitionGenerators() {
+            return ((ModelProviderDataAccessor) models).antioxidant$getBlockDefinitionGenerators();
+        }
+
+        private Map<Identifier, ModelInstance> getModels() {
+            return ((ModelProviderDataAccessor) models).antioxidant$getModels();
+        }
+    }
+
+    public record Paths(Path geyserMappingsPath, Path packPath, Path langPath) {
+        // TODO reduce default duplication with PackManager in client
+        public static final Paths DEFAULT = new Paths(Path.of("custom_mappings"), Path.of("pack"), Path.of("lang"));
+
+        public Paths resolveFrom(Path root) {
+            return new Paths(root.resolve(geyserMappingsPath), root.resolve(packPath), root.resolve(langPath));
+        }
+    }
+
+    private static class Serializer implements PackSerializer {
+        private final CachedOutput output;
+        private final HolderLookup.Provider registries;
+
+        private Serializer(CachedOutput output, HolderLookup.Provider registries) {
+            this.output = output;
+            this.registries = registries;
+        }
+
+        @Override
+        public <T> CompletableFuture<?> saveJson(Codec<T> codec, T object, Path path) {
+            return DataProvider.saveStable(output, registries, codec, object, path);
+        }
+
+        @Override
+        public CompletableFuture<?> saveTexture(byte[] texture, Path path) {
+            return CompletableFuture.runAsync(() -> {
+                try {
+                    output.writeIfNeeded(path, texture, Hashing.sha1().hashBytes(texture));
+                } catch (IOException exception) {
+                    LOGGER.error("Failed to save texture to {}", path, exception);
+                }
+            }, Util.backgroundExecutor().forName("PackSerializer-saveTexture"));
+        }
+
+        @Override
+        public CompletableFuture<?> saveResource(Resource resource, Path path) {
+            return CompletableFuture.runAsync(() -> {
+                try (InputStream input = resource.open()) {
+                    byte[] bytes = input.readAllBytes();
+                    output.writeIfNeeded(path, bytes, Hashing.sha1().hashBytes(bytes));
+                } catch (IOException exception) {
+                    LOGGER.error("Failed to save resource to {}", path, exception);
+                }
+            }, Util.backgroundExecutor().forName("PackSerializer-saveResource"));
+        }
+    }
+
+    private static class DatagenResolver implements AssetResolver {
+        private final ResourceManager resourceManager;
+        private final Providers providers;
+
+        private final Map<BlockState, Optional<BlockStateModel.UnbakedRoot>> instantiatedBlockStateModelCache = new Object2ObjectOpenHashMap<>();
+        private final Map<Identifier, Optional<ResolvedModel>> resolvedModelCache = new Object2ObjectOpenHashMap<>();
+        private final Map<Identifier, ClientItem> itemInfos;
+        private final Map<Identifier, ModelInstance> models;
+        private final Map<String, Map<String, String>> foreignLanguages;
+        private final Map<String, Map<String, SoundEventRegistration>> soundRegistrations;
+
+        private DatagenResolver(ResourceManager resourceManager, Providers providers) {
+            this.resourceManager = resourceManager;
+            this.providers = providers;
+
+            this.itemInfos = new Object2ObjectOpenHashMap<>();
+            for (Map.Entry<Item, ClientItem> entry : providers.getItemInfos().entrySet()) {
+                this.itemInfos.put(entry.getKey().builtInRegistryHolder().key().identifier(), entry.getValue());
+            }
+            this.models = providers.getModels();
+
+            // FabricLanguageProvider builds translation entries in a CompletableFuture, but that should have been finished by now
+            foreignLanguages = new Object2ObjectOpenHashMap<>();
+            providers.languages.ifPresent(languages -> languages.forEach(provider -> {
+                foreignLanguages.compute(((FabricLanguageProviderAccessor) provider).getLanguageCode(), (_, existingKeys) -> {
+                    if (existingKeys == null) {
+                        return new Object2ObjectOpenHashMap<>(((LanguageProviderDataAccessor) provider).antioxidant$getTranslationEntries());
+                    }
+                    existingKeys.putAll(((LanguageProviderDataAccessor) provider).antioxidant$getTranslationEntries());
+                    return existingKeys;
+                });
+            }));
+
+            // Same as above, CompletableFuture should have been finished by now
+            soundRegistrations = providers.sounds.map(sounds -> ((SoundsProviderDataAccessor) sounds).antioxidant$getData())
+                    .map(data -> data.entrySet().stream()
+                            .map(registrations -> Map.entry(registrations.getKey(), registrations.getValue().entrySet().stream()
+                                    .map(registration -> Map.entry(registration.getKey(), mapFabricToVanillaRegistration(registration.getValue())))
+                                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue))))
+                            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)))
+                    .orElseGet(Map::of);
+        }
+
+        @Override
+        public Optional<BlockStateModel.UnbakedRoot> getBlockStateModel(BlockState state) {
+            Optional<BlockStateModel.UnbakedRoot> existing = instantiatedBlockStateModelCache.get(state);
+            if (existing != null) {
+                return existing;
+            }
+            BlockModelDefinitionGenerator generator = providers.getBlockDefinitionGenerators().get(state.getBlock());
+            if (generator != null) {
+                BlockStateModelDispatcher dispatcher = generator.create();
+                dispatcher.instantiate(state.getBlock().getStateDefinition(), () -> "").forEach((possibleState, root) -> instantiatedBlockStateModelCache.put(possibleState, Optional.of(root)));
+                return instantiatedBlockStateModelCache.get(state);
+            }
+            state.getBlock().getStateDefinition().getPossibleStates().forEach(possibleState -> instantiatedBlockStateModelCache.put(possibleState, Optional.empty()));
+            return Optional.empty();
+        }
+
+        @Override
+        public Optional<ResolvedModel> getResolvedModel(Identifier identifier) {
+            return resolvedModelCache.computeIfAbsent(identifier, _ -> Optional.ofNullable(models.get(identifier))
+                    .<UnbakedModel>map(instance -> CuboidModel.fromStream(new StringReader(instance.get().toString())))
+                    .or(() -> {
+                        if (identifier.equals(ItemModelGenerator.GENERATED_ITEM_MODEL_ID)) {
+                            return Optional.of(new ItemModelGenerator());
+                        }
+                        return Optional.empty();
+                    })
+                    .or(() -> AntioxidantIO.safeIO(() -> {
+                        try (BufferedReader reader = resourceManager.openAsReader(identifier.withPrefix("models/").withSuffix(".json"))) {
+                            return CuboidModel.fromStream(reader);
+                        }
+                    }))
+                    .map(model -> new ResolvedModel() {
+                        @Override
+                        public UnbakedModel wrapped() {
+                            return model;
+                        }
+
+                        @Override
+                        public @Nullable ResolvedModel parent() {
+                            return Optional.ofNullable(model.parent()).flatMap(parent -> getResolvedModel(parent)).orElse(null);
+                        }
+
+                        @Override
+                        public String debugName() {
+                            return identifier.toString();
+                        }
+                    }));
+        }
+
+        @Override
+        public Optional<ClientItem> getClientItem(Identifier identifier) {
+            return Optional.ofNullable(itemInfos.get(identifier));
+        }
+
+        @Override
+        public Optional<EquipmentClientInfo> getEquipmentInfo(ResourceKey<EquipmentAsset> key) {
+            return Optional.ofNullable(providers.equipmentInfos.get(key));
+        }
+
+        @Override
+        public Optional<WaypointStyle> getWaypointStyle(ResourceKey<WaypointStyleAsset> key) {
+            return Optional.ofNullable(providers.waypointStyles.get(key));
+        }
+
+        @Override
+        public Optional<TextureResource> getTexture(@Nullable Identifier atlas, Identifier identifier) {
+            // We don't care about atlas since there are none loaded at datagen
+            return resourceManager.getResource(Antioxidant.decorateTextureIdentifier(identifier))
+                    .flatMap(resource -> AntioxidantIO.safeIO(() -> {
+                        Optional<AnimationMetadataSection> animationMetadata = resource.metadata().getSection(AnimationMetadataSection.TYPE);
+                        try (InputStream textureStream = resource.open()) {
+                            NativeImage texture = NativeImage.read(textureStream);
+                            return TextureResource.create(texture, animationMetadata);
+                        }
+                    }));
+        }
+
+        @Override
+        public Optional<Resource> getSound(Identifier sound) {
+            // TODO code duplication with ClientAssetResolver
+            return resourceManager.getResource(Sound.SOUND_LISTER.idToFile(sound));
+        }
+
+        @Override
+        public Map<String, Map<String, String>> getForeignLanguages() {
+            return foreignLanguages;
+        }
+
+        @Override
+        public Map<String, Map<String, SoundEventRegistration>> getSoundRegistrations() {
+            return soundRegistrations;
+        }
+
+        // Cursed? Yes. Works? Also yes
+        private static SoundEventRegistration mapFabricToVanillaRegistration(SoundTypeBuilderImpl.SoundType registration) {
+            return new SoundEventRegistration(registration.sounds().stream()
+                    .map(entry -> new Sound(entry.name(), ConstantFloat.of(entry.volume()), ConstantFloat.of(entry.pitch()),
+                            entry.weight(), entry.type() == SoundTypeBuilder.RegistrationType.FILE? Sound.Type.FILE : Sound.Type.SOUND_EVENT,
+                            entry.stream(), entry.preload(), entry.attenuationDistance()))
+                    .toList(), registration.replace(), registration.subtitle().orElse(null));
+        }
+    }
+}

@@ -1,0 +1,98 @@
+/*
+ * Copyright (c) 2026 GeyserMC. https://geysermc.org
+ *
+ * This file is part of Antioxidant.
+ *
+ * Rainbow is free software: you can redistribute it and/or modify it under the terms of the
+ * GNU Lesser General Public License as published by the Free Software Foundation, either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * Rainbow is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+ * PURPOSE. See the GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License along with
+ * Antioxidant. If not, see <https://www.gnu.org/licenses/>.
+ */
+
+package com.jubairprem.antioxidant.definition.item;
+
+import com.mojang.serialization.Codec;
+import com.mojang.serialization.MapCodec;
+import com.mojang.serialization.codecs.RecordCodecBuilder;
+import net.minecraft.core.component.DataComponentPatch;
+import net.minecraft.core.component.DataComponentType;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.resources.Identifier;
+import com.jubairprem.antioxidant.Antioxidant;
+import com.jubairprem.antioxidant.definition.item.predicate.GeyserPredicate;
+
+import java.util.List;
+import java.util.Optional;
+
+// TODO other keys, etc.
+// TODO display name can be a literal text component
+public record GeyserBaseItemDefinition(Identifier bedrockIdentifier, Optional<String> displayName,
+                                       List<GeyserPredicate> predicates, BedrockOptions bedrockOptions, DataComponentPatch components) {
+    private static final List<DataComponentType<?>> SUPPORTED_COMPONENTS = List.of(DataComponents.CONSUMABLE, DataComponents.EQUIPPABLE, DataComponents.FOOD,
+            DataComponents.MAX_DAMAGE, DataComponents.MAX_STACK_SIZE, DataComponents.USE_COOLDOWN, DataComponents.ENCHANTABLE, DataComponents.ENCHANTMENT_GLINT_OVERRIDE,
+            DataComponents.ATTACK_RANGE, DataComponents.KINETIC_WEAPON, DataComponents.PIERCING_WEAPON, DataComponents.SWING_ANIMATION, DataComponents.USE_EFFECTS);
+
+    private static final MapCodec<DataComponentPatch> FILTERED_COMPONENT_MAP_CODEC = DataComponentPatch.CODEC.optionalFieldOf("components")
+            .xmap(optional -> optional.orElse(DataComponentPatch.EMPTY), patch -> {
+                DataComponentPatch.Builder filtered = DataComponentPatch.builder();
+                patch.entrySet().stream()
+                        .filter(entry -> entry.getValue().isEmpty() || SUPPORTED_COMPONENTS.contains(entry.getKey()))
+                        .forEach(entry -> {
+                            if (entry.getValue().isPresent()) {
+                                //noinspection unchecked
+                                filtered.set((DataComponentType) entry.getKey(), entry.getValue().orElseThrow());
+                            } else {
+                                filtered.remove(entry.getKey());
+                            }
+                        });
+                DataComponentPatch built = filtered.build();
+                return built.isEmpty() ? Optional.empty() : Optional.of(built);
+            });
+
+    public static final MapCodec<GeyserBaseItemDefinition> MAP_CODEC = RecordCodecBuilder.mapCodec(instance ->
+            instance.group(
+                    Identifier.CODEC.fieldOf("bedrock_identifier").forGetter(GeyserBaseItemDefinition::bedrockIdentifier),
+                    Codec.STRING.optionalFieldOf("display_name").forGetter(GeyserBaseItemDefinition::displayName),
+                    GeyserPredicate.LIST_CODEC.optionalFieldOf("predicate", List.of()).forGetter(GeyserBaseItemDefinition::predicates),
+                    BedrockOptions.CODEC.optionalFieldOf("bedrock_options", BedrockOptions.DEFAULT).forGetter(GeyserBaseItemDefinition::bedrockOptions),
+                    FILTERED_COMPONENT_MAP_CODEC.forGetter(GeyserBaseItemDefinition::components)
+            ).apply(instance, GeyserBaseItemDefinition::new)
+    );
+
+    public boolean conflictsWith(GeyserBaseItemDefinition other) {
+        if (predicates.size() == other.predicates.size()) {
+            boolean predicatesAreEqual = true;
+            for (GeyserPredicate predicate : predicates) {
+                if (!other.predicates.contains(predicate)) {
+                    predicatesAreEqual = false;
+                    break;
+                }
+            }
+            return predicatesAreEqual;
+        }
+        return false;
+    }
+
+    public String textureName() {
+        return bedrockOptions.icon.orElse(Antioxidant.bedrockSafeIdentifier(bedrockIdentifier));
+    }
+
+    public record BedrockOptions(Optional<String> icon, boolean allowOffhand, boolean displayHandheld, int protectionValue, List<Identifier> tags) {
+        public static final Codec<BedrockOptions> CODEC = RecordCodecBuilder.create(instance ->
+                instance.group(
+                        Codec.STRING.optionalFieldOf("icon").forGetter(BedrockOptions::icon),
+                        Codec.BOOL.optionalFieldOf("allow_offhand", true).forGetter(BedrockOptions::allowOffhand),
+                        Codec.BOOL.optionalFieldOf("display_handheld", false).forGetter(BedrockOptions::displayHandheld),
+                        Codec.INT.optionalFieldOf("protection_value", 0).forGetter(BedrockOptions::protectionValue),
+                        Identifier.CODEC.listOf().optionalFieldOf("tags", List.of()).forGetter(BedrockOptions::tags)
+                ).apply(instance, BedrockOptions::new)
+        );
+        public static final BedrockOptions DEFAULT = new BedrockOptions(Optional.empty(), true, false, 0, List.of());
+    }
+}

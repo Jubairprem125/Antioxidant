@@ -1,0 +1,106 @@
+/*
+ * Copyright (c) 2026 GeyserMC. https://geysermc.org
+ *
+ * This file is part of Antioxidant.
+ *
+ * Rainbow is free software: you can redistribute it and/or modify it under the terms of the
+ * GNU Lesser General Public License as published by the Free Software Foundation, either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * Rainbow is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+ * without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+ * PURPOSE. See the GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License along with
+ * Antioxidant. If not, see <https://www.gnu.org/licenses/>.
+ */
+
+package com.jubairprem.antioxidant.pack;
+
+import net.minecraft.client.resources.sounds.Sound;
+import net.minecraft.resources.Identifier;
+import com.jubairprem.antioxidant.Antioxidant;
+import com.jubairprem.antioxidant.mapping.texture.TextureHolder;
+import com.jubairprem.antioxidant.pack.attachable.BedrockAttachable;
+
+import java.nio.file.Path;
+import java.util.Optional;
+
+public record PackPaths(Path mappingsRoot, Path packRoot, Optional<Path> zipOutput, Optional<Path> languageOutput) {
+    private static final Path BLOCK_MAPPINGS = Path.of("geyser_block_mappings.json");
+    private static final Path ITEM_MAPPINGS = Path.of("geyser_item_mappings.json");
+    private static final Path SKULL_MAPPINGS = Path.of("geyser_skull_mappings.json");
+    private static final Path WAYPOINT_STYLE_MAPPINGS = Path.of("geyser_waypoint_style_mappings.json");
+
+    private static final Path ANIMATION_DIRECTORY = Path.of("animations");
+    private static final Path ATTACHABLES_DIRECTORY = Path.of("attachables");
+    private static final Path GEOMETRY_DIRECTORY = Path.of("models/entity");
+    private static final Path RENDER_CONTROLLERS_DIRECTORY = Path.of("render_controllers");
+
+    private static final Path MANIFEST = Path.of("manifest.json");
+    private static final Path ITEM_ATLAS = Path.of("textures/item_texture.json");
+    private static final Path TERRAIN_ATLAS = Path.of("textures/terrain_texture.json");
+    private static final Path FLIPBOOK_TEXTURES = Path.of("textures/flipbook_textures.json");
+    private static final Path SOUND_DEFINITIONS = Path.of("sounds/sound_definitions.json");
+
+    public Path blockMappings() {
+        return mappingsRoot.resolve(BLOCK_MAPPINGS);
+    }
+
+    public Path itemMappings() {
+        return mappingsRoot.resolve(ITEM_MAPPINGS);
+    }
+
+    public Path skullMappings() {
+        return mappingsRoot.resolve(SKULL_MAPPINGS);
+    }
+
+    public Path waypointStyleMappings() {
+        return mappingsRoot.resolve(WAYPOINT_STYLE_MAPPINGS);
+    }
+
+    public Path animation(String identifier) {
+        return packRoot.resolve(ANIMATION_DIRECTORY, Path.of(identifier + ".animation.json"));
+    }
+
+    public Path attachable(BedrockAttachable attachable) {
+        return packRoot.resolve(ATTACHABLES_DIRECTORY, Path.of(Antioxidant.bedrockSafeIdentifier(attachable.info().identifier()) + ".json"));
+    }
+
+    public Path geometry(String identifier) {
+        return packRoot.resolve(GEOMETRY_DIRECTORY, Path.of(identifier + ".geo.json"));
+    }
+
+    public Path renderControllers(String identifier) {
+        return packRoot.resolve(RENDER_CONTROLLERS_DIRECTORY, Path.of(identifier + ".render_controllers.json"));
+    }
+
+    public Path texturePath(TextureHolder texture) {
+        Identifier textureIdentifier = Antioxidant.decorateTextureIdentifier(texture.destination());
+        return packRoot.resolve(textureIdentifier.getPath());
+    }
+
+    public Path sound(Sound sound) {
+        return packRoot.resolve(sound.getPath().getPath());
+    }
+
+    public Path manifest() {
+        return packRoot.resolve(MANIFEST);
+    }
+
+    public Path itemAtlas() {
+        return packRoot.resolve(ITEM_ATLAS);
+    }
+
+    public Path terrainAtlas() {
+        return packRoot.resolve(TERRAIN_ATLAS);
+    }
+
+    public Path flipbookTextures() {
+        return packRoot.resolve(FLIPBOOK_TEXTURES);
+    }
+
+    public Path soundDefinitions() {
+        return packRoot.resolve(SOUND_DEFINITIONS);
+    }
+}
